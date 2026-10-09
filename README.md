@@ -1,114 +1,137 @@
-<p align="center">
-  <a href="http://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="120" alt="Nest Logo" /></a>
-</p>
+# Athlete Training API
 
-[circleci-image]: https://img.shields.io/circleci/build/github/nestjs/nest/master?token=abc123def456
-[circleci-url]: https://circleci.com/gh/nestjs/nest
+Athlete Training API: athletes, training sessions and weekly training-load analytics.
 
-  <p align="center">A progressive <a href="http://nodejs.org" target="_blank">Node.js</a> framework for building efficient and scalable server-side applications.</p>
-    <p align="center">
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/v/@nestjs/core.svg" alt="NPM Version" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/l/@nestjs/core.svg" alt="Package License" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/dm/@nestjs/common.svg" alt="NPM Downloads" /></a>
-<a href="https://circleci.com/gh/nestjs/nest" target="_blank"><img src="https://img.shields.io/circleci/build/github/nestjs/nest/master" alt="CircleCI" /></a>
-<a href="https://discord.gg/G7Qnnhy" target="_blank"><img src="https://img.shields.io/badge/discord-online-brightgreen.svg" alt="Discord"/></a>
-<a href="https://opencollective.com/nest#backer" target="_blank"><img src="https://opencollective.com/nest/backers/badge.svg" alt="Backers on Open Collective" /></a>
-<a href="https://opencollective.com/nest#sponsor" target="_blank"><img src="https://opencollective.com/nest/sponsors/badge.svg" alt="Sponsors on Open Collective" /></a>
-  <a href="https://paypal.me/kamilmysliwiec" target="_blank"><img src="https://img.shields.io/badge/Donate-PayPal-ff3f59.svg" alt="Donate us"/></a>
-    <a href="https://opencollective.com/nest#sponsor"  target="_blank"><img src="https://img.shields.io/badge/Support%20us-Open%20Collective-41B883.svg" alt="Support us"></a>
-  <a href="https://twitter.com/nestframework" target="_blank"><img src="https://img.shields.io/twitter/follow/nestframework.svg?style=social&label=Follow" alt="Follow us on Twitter"></a>
-</p>
-  <!--[![Backers on Open Collective](https://opencollective.com/nest/backers/badge.svg)](https://opencollective.com/nest#backer)
-  [![Sponsors on Open Collective](https://opencollective.com/nest/sponsors/badge.svg)](https://opencollective.com/nest#sponsor)-->
+## Live links
 
-## Description
+| | |
+|---|---|
+| API docs (Swagger) | http://13.201.167.204:3000/api |
+| Frontend | http://athlete-training-satyam.s3-website.ap-south-1.amazonaws.com/ |
+| Frontend repo | https://github.com/SatyamKharote/athlete-web |
 
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
+## Tech stack
 
-## Project setup
+- **NestJS** + **TypeScript**
+- **PostgreSQL 16**
+- **Drizzle ORM** (with `node-postgres`)
+- **class-validator** / **class-transformer** for request validation
+- **Swagger** (`@nestjs/swagger`) for API docs at `/api`
+- **Docker Compose** for the API and database
+- **AWS EC2** for hosting
 
-```bash
-$ npm install
+## Endpoints
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/` | Health check: confirms the DB connection and returns the athlete count |
+| `POST` | `/athletes` | Create an athlete |
+| `GET` | `/athletes` | List athletes. Query: `search` (name or email, case-insensitive), `page` (default 1), `limit` (default 10, max 100) |
+| `GET` | `/athletes/:id` | Get one athlete |
+| `PATCH` | `/athletes/:id` | Partially update an athlete |
+| `DELETE` | `/athletes/:id` | Delete an athlete and their sessions (`204`) |
+| `POST` | `/athletes/:athleteId/sessions` | Create a training session for an athlete |
+| `GET` | `/athletes/:athleteId/sessions` | List an athlete's sessions, newest first. Query: `from`, `to` (YYYY-MM-DD), `page`, `limit` |
+| `GET` | `/athletes/:athleteId/training-load` | Weekly training load. Query: optional `from`, `to` |
+| `GET` | `/sessions/:id` | Get one session |
+| `PATCH` | `/sessions/:id` | Partially update a session |
+| `DELETE` | `/sessions/:id` | Delete a session (`204`) |
+
+List endpoints return `{ data, meta: { page, limit, total, totalPages } }`. Every session in a response includes a computed `trainingLoad` field.
+
+## Data model
+
+`athletes` 1 ──< many `training_sessions`. The schema is in `db/init.sql`, which Postgres runs on first start; the matching Drizzle schema is in `src/db/schema.ts`.
+
+**athletes**
+
+| Column | Type | Constraints |
+|---|---|---|
+| `id` | `uuid` | Primary key, `gen_random_uuid()` |
+| `name` | `text` | Not null |
+| `email` | `text` | Not null, **unique** |
+| `sport` | `text` | Not null |
+| `created_at` | `timestamptz` | Not null, default `now()` |
+
+**training_sessions**
+
+| Column | Type | Constraints |
+|---|---|---|
+| `id` | `uuid` | Primary key, `gen_random_uuid()` |
+| `athlete_id` | `uuid` | Not null, FK → `athletes(id)` **`ON DELETE CASCADE`** |
+| `session_date` | `date` | Not null |
+| `type` | `text` | Not null (API allows `Batting`, `Bowling`, `Fielding`, `Strength`, `Sprint`, `Recovery`) |
+| `duration_min` | `int` | Not null, `CHECK (duration_min > 0)` |
+| `rpe` | `int` | Not null, `CHECK (rpe BETWEEN 1 AND 10)` |
+| `notes` | `text` | Nullable |
+| `created_at` | `timestamptz` | Not null, default `now()` |
+
+**Index:** `idx_sessions_athlete_date ON training_sessions (athlete_id, session_date)`.
+
+All session queries filter by one athlete and then by a date range, or sort or group by date. With `athlete_id` as the leading column and `session_date` second, Postgres can jump straight to one athlete's rows and range-scan them in date order. It doesn't have to scan the whole table, which `init.sql` seeds with 100,000 sessions (200 athletes × 500 sessions).
+
+## Training load
+
+Each session's load is calculated with the session-RPE method:
+
+```
+training load = duration (minutes) × RPE (1–10)
 ```
 
-## Compile and run the project
+A 60-minute session at RPE 7 has a load of 420.
 
-```bash
-# development
-$ npm run start
+### Weekly endpoint
 
-# watch mode
-$ npm run start:dev
+`GET /athletes/:athleteId/training-load` runs one SQL query (`src/sessions/sessions.service.ts`):
 
-# production mode
-$ npm run start:prod
+1. **CTE (`weekly`)**: groups the athlete's sessions by `date_trunc('week', session_date)`, which gives ISO weeks starting on Monday. For each week it calculates the session count, total minutes and `SUM(duration_min * rpe)` as the weekly load.
+2. **`LAG` window function**: `weekly_load - LAG(weekly_load) OVER (ORDER BY week_start)` gives the change from the previous week that has data. The first week returns `null`.
+3. **Parameterised SQL**: the query uses Drizzle's `sql` tagged template, so `athleteId`, `from` and `to` are sent as bound parameters and never concatenated into the query. If `from` or `to` is omitted, it is passed as `NULL`, and the `(${from}::date IS NULL OR session_date >= ${from}::date)` check turns that filter off.
+
+Example response:
+
+```json
+[
+  { "weekStart": "2026-07-06", "sessions": 5, "totalMinutes": 340, "weeklyLoad": 1980, "changeFromLastWeek": null },
+  { "weekStart": "2026-07-13", "sessions": 6, "totalMinutes": 410, "weeklyLoad": 2350, "changeFromLastWeek": 370 }
+]
 ```
 
-## Run tests
+## Validation and error handling
+
+A global `ValidationPipe` runs with `whitelist`, `forbidNonWhitelisted` and `transform` turned on.
+
+| Status | When |
+|---|---|
+| `400 Bad Request` | The body or query fails a DTO rule: invalid email, empty name, `rpe` outside 1–10, `durationMin` outside 1–600, unknown `type`, bad date, `limit` above 100, and so on. Unknown fields also return 400, and so do path IDs that are not valid UUIDs (`ParseUUIDPipe`). |
+| `404 Not Found` | The athlete or session doesn't exist. Session create, list and training-load requests also return 404 if the athlete doesn't exist. |
+| `409 Conflict` | An athlete create or update uses an email that is already taken (Postgres unique violation `23505`). |
+
+## Running locally
+
+Requires Docker.
 
 ```bash
-# unit tests
-$ npm run test
+docker compose up --build
+```
 
-# e2e tests
-$ npm run test:e2e
+- API: http://localhost:3000
+- Swagger docs: http://localhost:3000/api
+- Postgres: `localhost:5433` (user `postgres`, password `admin`, database `athletes`)
 
-# test coverage
-$ npm run test:cov
+On first start, `db/init.sql` creates the tables and index and seeds sample data. It runs only when the `pgdata` volume is empty, so run `docker compose down -v` to reset the database.
+
+To run the API on your machine against the containerised database:
+
+```bash
+docker compose up -d db
+npm install
+DATABASE_URL=postgres://postgres:admin@localhost:5433/athletes npm run start:dev
 ```
 
 ## Deployment
 
-When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.
-
-If you are looking for a cloud-based platform to deploy your NestJS application, check out [Mau](https://mau.nestjs.com), our official platform for deploying NestJS applications on AWS. Mau makes deployment straightforward and fast, requiring just a few simple steps:
-
-```bash
-$ npm install -g @nestjs/mau
-$ mau deploy
-```
-
-With Mau, you can deploy your application in just a few clicks, allowing you to focus on building features rather than managing infrastructure.
-
-## Observability
-
-In production applications, observability is essential for understanding how your system behaves, detecting issues early, and maintaining reliable performance.
-
-[NestJS Observe](https://observe.nestjs.com) automatically instruments your NestJS application, giving you deep visibility into your system with minimal setup:
-
-- **Distributed tracing:** Follow requests across services and understand how they flow through your system.
-- **Waterfall analysis:** Visualize request execution and identify slow operations, bottlenecks, and unexpected delays.
-- **Performance analysis:** Analyze application performance in real time and quickly pinpoint areas that need optimization.
-- **Metrics:** Track key application and infrastructure metrics to understand system health and performance trends.
-- **Logging:** Centralize and correlate logs with traces and other telemetry to make debugging easier.
-- **Error tracking:** Detect errors quickly and investigate their root causes with the surrounding context.
-- **SLA monitoring:** Track service-level objectives and identify when your application is approaching or exceeding defined thresholds.
-- **Alarms and alerts:** Set up alerts for critical errors, performance degradation, SLA violations, and other anomalies so your team can react quickly.
-
-## Resources
-
-Check out a few resources that may come in handy when working with NestJS:
-
-- Visit the [NestJS Documentation](https://docs.nestjs.com) to learn more about the framework.
-- For questions and support, please visit our [Discord channel](https://discord.gg/G7Qnnhy).
-- To dive deeper and get more hands-on experience, check out our official video [courses](https://courses.nestjs.com/).
-- Deploy your application to AWS with the help of [NestJS Mau](https://mau.nestjs.com) in just a few clicks.
-- Auto-instrument your application with [NestJS Observer](https://observer.nestjs.com). Distributed tracing, metrics, and logging made easy. Error tracking and performance monitoring for your NestJS applications.
-- Visualize your application graph and interact with the NestJS application in real-time using [NestJS Devtools](https://devtools.nestjs.com).
-- Need help with your project (part-time to full-time)? Check out our official [enterprise support](https://enterprise.nestjs.com).
-- To stay in the loop and get updates, follow us on [X](https://x.com/nestframework) and [LinkedIn](https://linkedin.com/company/nestjs).
-- Looking for a job, or have a job to offer? Check out our official [Jobs board](https://jobs.nestjs.com).
-
-## Support
-
-Nest is an MIT-licensed open source project. It can grow thanks to the sponsors and support by the amazing backers. If you'd like to join them, please [read more here](https://docs.nestjs.com/support).
-
-## Stay in touch
-
-- Author - [Kamil Myśliwiec](https://twitter.com/kammysliwiec)
-- Website - [https://nestjs.com](https://nestjs.com/)
-- Twitter - [@nestframework](https://twitter.com/nestframework)
-
-## License
-
-Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
+- Runs on an **AWS EC2** instance (t3.micro) using the same `docker-compose.yml`. The Dockerfile is a multi-stage build on `node:24-alpine`, and the final image contains only production dependencies.
+- The EC2 **security group exposes only port 3000** (the API). Compose publishes Postgres on host port 5433, but the security group doesn't open that port, so the database can't be reached from the internet.
+- A **swap file was added** on the t3.micro, which has only 1 GB of RAM, to give the Docker image build (`npm ci`, `nest build`) and the running containers more memory headroom.
+- The frontend is a static site hosted on S3, and it calls the API on port 3000. CORS is enabled in `main.ts`.
