@@ -12,6 +12,7 @@ async function bootstrap() {
     new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }),
   );
 
+  app.enableCors();
   const config = new DocumentBuilder()
     .setTitle('Athlete Training API')
     .setDescription('Athletes, training sessions and weekly training load')

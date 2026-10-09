@@ -6,6 +6,7 @@ import { SessionsService } from './sessions.service.js';
 import { CreateSessionDto } from './dto/create-session.dto.js';
 import { UpdateSessionDto } from './dto/update-session.dto.js';
 import { ListSessionsQueryDto } from './dto/list-sessions-query.dto.js';
+import { TrainingLoadQueryDto } from './dto/training-load-query.dto.js';
 
 @ApiTags('sessions')
 @Controller()
@@ -26,6 +27,14 @@ export class SessionsController {
     @Query() query: ListSessionsQueryDto,
   ) {
     return this.sessionsService.findAllForAthlete(athleteId, query);
+  }
+
+  @Get('athletes/:athleteId/training-load')
+  getTrainingLoad(
+    @Param('athleteId', ParseUUIDPipe) athleteId: string,
+    @Query() query: TrainingLoadQueryDto,
+  ) {
+    return this.sessionsService.getTrainingLoad(athleteId, query);
   }
 
   @Get('sessions/:id')

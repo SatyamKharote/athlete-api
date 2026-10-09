@@ -1,10 +1,11 @@
 import { Inject, Injectable, NotFoundException } from '@nestjs/common';
-import { and, count, desc, eq, gte, lte, type SQL } from 'drizzle-orm';
+import { and, count, desc, eq, gte, lte, sql, type SQL } from 'drizzle-orm';
 import { DRIZZLE, type DrizzleDB } from '../db/db.module.js';
 import { athletes, trainingSessions } from '../db/schema.js';
 import { CreateSessionDto } from './dto/create-session.dto.js';
 import { UpdateSessionDto } from './dto/update-session.dto.js';
 import { ListSessionsQueryDto } from './dto/list-sessions-query.dto.js';
+   import { TrainingLoadQueryDto } from './dto/training-load-query.dto.js';
 
 type Session = typeof trainingSessions.$inferSelect;
 
@@ -67,6 +68,43 @@ export class SessionsService {
     if (!session) throw new NotFoundException(`Session ${id} not found`);
     return withLoad(session);
   }
+  
+  async getTrainingLoad(athleteId: string, query: TrainingLoadQueryDto) {
+    await this.ensureAthleteExists(athleteId);
+    const from = query.from ?? null;
+    const to = query.to ?? null;
+
+    const result = await this.db.execute<{
+      week_start: string;
+      sessions: number;
+      total_minutes: number;
+      weekly_load: number;
+      change_from_last_week: number | null;
+    } > (sql`
+      WITH weekly AS (
+        SELECT date_trunc('week', session_date)::date::text AS week_start,
+               COUNT(*)::int                             AS sessions,
+               SUM(duration_min)::int                    AS total_minutes,
+               SUM(duration_min * rpe)::int              AS weekly_load
+        FROM training_sessions
+        WHERE athlete_id = ${athleteId}
+          AND (${from}::date IS NULL OR session_date >= ${from}::date)
+          AND (${to}::date IS NULL OR session_date <= ${to}::date)
+        GROUP BY week_start
+      )
+      SELECT week_start, sessions, total_minutes, weekly_load,
+             weekly_load - LAG(weekly_load) OVER (ORDER BY week_start) AS change_from_last_week
+      FROM weekly
+      ORDER BY week_start
+    `);
+      return result.rows.map((row) => ({
+      weekStart: row.week_start,
+      sessions: row.sessions,
+      totalMinutes: row.total_minutes,
+      weeklyLoad: row.weekly_load,
+      changeFromLastWeek: row.change_from_last_week,
+    }));
+  }
 
   async update(id: string, dto: UpdateSessionDto) {
     const [session] = await this.db
@@ -85,4 +123,6 @@ export class SessionsService {
       .returning({ id: trainingSessions.id });
     if (!session) throw new NotFoundException(`Session ${id} not found`);
   }
+
+  
 }
